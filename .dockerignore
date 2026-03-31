@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.json
+.git/
+.gitignore
+test_api.py
+README.md
+output_images/*
