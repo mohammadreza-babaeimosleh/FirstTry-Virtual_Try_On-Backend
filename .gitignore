@@ -210,6 +210,6 @@ pyrightconfig.json
 
 # Manual Ignores
 
-./output_images/*
+./output_images/
 ./__pycache__
 .DS_Store
