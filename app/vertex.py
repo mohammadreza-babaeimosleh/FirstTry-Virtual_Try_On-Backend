@@ -79,7 +79,8 @@ def _call_via_sdk(
     )
 
     try:
-        config   = types.RecontextImageConfig(number_of_images=number_of_images)
+        config   = types.RecontextImageConfig(number_of_images=number_of_images,
+            safety_filter_level=types.SafetyFilterLevel.BLOCK_ONLY_HIGH)
         response = client.models.recontext_image(model=MODEL_ID, source=source, config=config)
     except (AttributeError, TypeError) as exc:
         logger.warning("RecontextImageConfig unavailable (%s) — using default (1 image).", exc)
@@ -126,6 +127,7 @@ def _call_via_rest(
             "product_images": [{"bytesBase64Encoded": _b64(_pil_to_bytes(garment_image))}],
         }],
         "parameters": {"sampleCount": number_of_images},
+        "safetySetting": "block-only-high",
     }
     resp = requests.post(
         url,
