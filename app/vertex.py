@@ -126,8 +126,10 @@ def _call_via_rest(
             "person_image":   {"bytesBase64Encoded": _b64(_pil_to_bytes(person_image))},
             "product_images": [{"bytesBase64Encoded": _b64(_pil_to_bytes(garment_image))}],
         }],
-        "parameters": {"sampleCount": number_of_images},
-        "safetySetting": "block-only-high",
+        "parameters": {
+            "sampleCount": number_of_images,
+            "safetySetting": "block-only-high"  
+        },
     }
     resp = requests.post(
         url,
