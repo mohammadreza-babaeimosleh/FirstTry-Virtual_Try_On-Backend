@@ -29,11 +29,33 @@ MODEL_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/04/596532721514047
 # GARMENT_IMAGE_URL = "https://beams-america.com/cdn/shop/files/Copyof010563803_79.webp?v=1750197156&width=1100"
 GARMENT_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/04/5965327215140474111.jpg"
 
+# Second garment for multi-garment Gemini tests — replace with a real URL
+GARMENT_IMAGE_URL_2 = "https://6174co.com/wp-content/uploads/2026/04/5965327215140474111.jpg"
+
+# ── Payloads ──────────────────────────────────────────────────────────────────
+
+# Default: virtual-try-on-001 (single garment string)
 PAYLOAD = {
-    "model_image_url":   MODEL_IMAGE_URL,
-    "garment_image_url": GARMENT_IMAGE_URL,
-    "sample_count":      1,       # 1–4
-    "output_format":     "png",   # "png" or "jpeg"
+    "model_image_url":    MODEL_IMAGE_URL,
+    "garment_image_urls": GARMENT_IMAGE_URL,   # single string — also accepts a 1-element list
+    "sample_count":       1,                   # 1–4
+    "output_format":      "png",               # "png" or "jpeg"
+}
+
+# Gemini — single garment string
+GEMINI_PAYLOAD = {
+    "model_image_url":    MODEL_IMAGE_URL,
+    "garment_image_urls": GARMENT_IMAGE_URL,
+    "output_format":      "png",
+    "model":              "gemini-3.1-flash-image",
+}
+
+# Gemini — multiple garments in one shot (list of URLs)
+GEMINI_MULTI_PAYLOAD = {
+    "model_image_url":    MODEL_IMAGE_URL,
+    "garment_image_urls": [GARMENT_IMAGE_URL, GARMENT_IMAGE_URL_2],   # add more URLs as needed
+    "output_format":      "png",
+    "model":              "gemini-3.1-flash-image",
 }
 
 
@@ -100,13 +122,93 @@ def test_tryon() -> None:
     print("\n  Done.")
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+def test_tryon_gemini() -> None:
+    print("\n── POST /tryon  [gemini-3.1-flash-image, single garment] ────")
+    print("  Payload:", json.dumps(GEMINI_PAYLOAD, indent=4))
 
+    t0      = time.time()
+    result  = _post("/tryon", GEMINI_PAYLOAD)
+    elapsed = time.time() - t0
+
+    print(f"\n  Completed in {elapsed:.1f}s")
+    print("  generation_id :", result.get("generation_id"))
+    print("  folder        :", result.get("folder"))
+    print("  model_url     :", result.get("model_url"))
+    print("  garment_url   :", result.get("garment_url"))
+    print("  result_urls   :", result.get("result_urls"))
+
+    result_urls = result.get("result_urls", [])
+    if not result_urls:
+        print("\n  WARNING: no result URLs returned.")
+        return
+
+    os.makedirs("output_images", exist_ok=True)
+    for i, url in enumerate(result_urls):
+        dest = f"output_images/gemini_result_{i}.png"
+        print(f"\n  Downloading result {i} → {dest} …")
+        _download(url, dest)
+        print(f"  Saved: {dest}")
+
+    print("\n  Done.")
+
+
+def test_tryon_gemini_multi() -> None:
+    print("\n── POST /tryon  [gemini-3.1-flash-image, multi-garment] ─────")
+    print("  Payload:", json.dumps(GEMINI_MULTI_PAYLOAD, indent=4))
+
+    t0      = time.time()
+    result  = _post("/tryon", GEMINI_MULTI_PAYLOAD)
+    elapsed = time.time() - t0
+
+    print(f"\n  Completed in {elapsed:.1f}s")
+    print("  generation_id :", result.get("generation_id"))
+    print("  folder        :", result.get("folder"))
+    print("  model_url     :", result.get("model_url"))
+    print("  garment_url   :", result.get("garment_url"))
+    print("  result_urls   :", result.get("result_urls"))
+
+    result_urls = result.get("result_urls", [])
+    if not result_urls:
+        print("\n  WARNING: no result URLs returned.")
+        return
+
+    os.makedirs("output_images", exist_ok=True)
+    for i, url in enumerate(result_urls):
+        dest = f"output_images/gemini_multi_result_{i}.png"
+        print(f"\n  Downloading result {i} → {dest} …")
+        _download(url, dest)
+        print(f"  Saved: {dest}")
+
+    print("\n  Done.")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+#
+# Pass a test name to run only that test, e.g.:
+#   python test_api.py vto          → virtual-try-on-001 (default)
+#   python test_api.py gemini       → gemini single garment
+#   python test_api.py gemini_multi → gemini multi-garment
+#   python test_api.py              → runs all three
+#
 if __name__ == "__main__":
     print(f"Target: {BASE_URL}\n")
+
+    suite = sys.argv[1] if len(sys.argv) > 1 else "all"
+
     try:
         test_health()
-        test_tryon()
+
+        if suite in ("all", "vto"):
+            test_tryon()
+        if suite in ("all", "gemini"):
+            test_tryon_gemini()
+        if suite in ("all", "gemini_multi"):
+            test_tryon_gemini_multi()
+
+        if suite not in ("all", "vto", "gemini", "gemini_multi"):
+            print(f"\nUnknown test '{suite}'. Valid options: vto, gemini, gemini_multi")
+            sys.exit(1)
+
     except urllib.error.HTTPError as exc:
         body = exc.read().decode(errors="replace")
         print(f"\nHTTP {exc.code}: {exc.reason}")
