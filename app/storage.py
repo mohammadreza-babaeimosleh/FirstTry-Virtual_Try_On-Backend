@@ -124,16 +124,20 @@ def _get_url(blob, public: bool, has_private_key: bool) -> str:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def upload_generation(
-    model_image:      Image.Image,
-    garment_image:    Image.Image,
-    result_images:    list[Image.Image],
-    bucket_name:      str,
-    public:           bool = False,
-    credentials_dict: Optional[dict] = None,
-    fmt:              str = "png",
+    model_image:          Image.Image,
+    garment_image:        Image.Image,
+    result_images:        list[Image.Image],
+    bucket_name:          str,
+    public:               bool = False,
+    credentials_dict:     Optional[dict] = None,
+    fmt:                  str = "png",
+    extra_garment_images: Optional[list[Image.Image]] = None,
 ) -> dict:
     """
     Upload all images for one generation to GCS and return their URLs.
+
+    Primary garment → garment.png  (garment_url in response)
+    Extra garments  → garment_1.png, garment_2.png, … (saved but not in response)
 
     Returns:
       {
@@ -145,27 +149,39 @@ def upload_generation(
       }
     """
     client        = _get_client(credentials_dict)
-    has_key       = bool(credentials_dict)   # True → private key available for signing
+    has_key       = bool(credentials_dict)
     generation_id = uuid.uuid4().hex
     folder        = f"VTON/{generation_id}"
     mime          = _content_type(fmt)
     ext           = fmt.lower()
 
+    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
     def _upload(img: Image.Image, name: str) -> str:
         blob = client.bucket(bucket_name).blob(name)
+        blob.metadata = {"created": created_at, "generation_id": generation_id}
         blob.upload_from_string(_pil_to_bytes(img, fmt), content_type=mime)
         if public:
             blob.make_public()
         return _get_url(blob, public=public, has_private_key=has_key)
 
-    logger.info("Uploading generation %s to gs://%s/%s …", generation_id, bucket_name, folder)
+    extras = extra_garment_images or []
+    logger.info(
+        "Uploading generation %s to gs://%s/%s … (garments=%d)",
+        generation_id, bucket_name, folder, 1 + len(extras),
+    )
+
     model_url   = _upload(model_image,   f"{folder}/model.{ext}")
     garment_url = _upload(garment_image, f"{folder}/garment.{ext}")
+
+    for i, img in enumerate(extras):
+        _upload(img, f"{folder}/garment_{i + 1}.{ext}")
+
     result_urls = [
         _upload(img, f"{folder}/result_{i}.{ext}")
         for i, img in enumerate(result_images)
     ]
-    logger.info("Upload complete. %d result(s).", len(result_urls))
+    logger.info("Upload complete. %d garment(s), %d result(s).", 1 + len(extras), len(result_urls))
 
     return {
         "generation_id": generation_id,
