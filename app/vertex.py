@@ -180,3 +180,89 @@ def run_tryon(
         person_image, garment_image, number_of_images,
         credentials_dict, project, location,
     )
+
+
+# ── Gemini image-generation VTO ───────────────────────────────────────────────
+
+GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"
+
+GEMINI_VTO_PROMPT = (
+    "You are a Virtual Try-On system. You are given a model image and one or more "
+    "garment image(s). Your task is to realistically dress the model in the provided "
+    "garment(s).\n\n"
+    "The following rules MUST be strictly obeyed:\n\n"
+    "1. **Preserve the model exactly**\n"
+    "   * Do not change the model's face, identity, facial expression, skin tone, hair, "
+    "body shape, body proportions, age, gender presentation, or pose.\n"
+    "   * Do not alter visible features such as hands, legs, tattoos, makeup, jewelry, "
+    "or accessories unless they are physically covered by the garment.\n\n"
+    "2. **Preserve the pose**\n"
+    "   * Accurately recognize the model's body pose, posture, limb positions, and camera angle.\n"
+    "   * The garment must follow the model's existing pose naturally.\n"
+    "   * Do not distort, rotate, stretch, or reposition the model's body.\n\n"
+    "3. **Preserve the garment exactly**\n"
+    "   * Keep the garment's color, texture, fabric type, pattern, logos, stitching, seams, "
+    "buttons, zippers, prints, embroidery, and all visible design details unchanged.\n"
+    "   * Do not invent, remove, blur, simplify, or modify any garment details.\n"
+    "   * The garment should retain its original style, silhouette, length, fit, and structure "
+    "while conforming naturally to the model's body and pose.\n\n"
+    "4. **Preserve the scene**\n"
+    "   * Do not change the background, lighting, shadows, camera perspective, image framing, "
+    "or environment.\n"
+    "   * Do not add or remove objects from the scene.\n\n"
+    "5. **Realistic integration**\n"
+    "   * The garment must be placed only on the correct body area.\n"
+    "   * Respect natural occlusions, such as arms, hair, hands, bags, or other objects "
+    "appearing in front of the clothing.\n"
+    "   * Adjust wrinkles, folds, and shadows only as needed to make the garment look naturally "
+    "worn, while preserving the garment's original appearance.\n"
+    "   * The final result must look photorealistic and seamless.\n\n"
+    "6. **No unwanted edits**\n"
+    "   * Do not add new clothing, accessories, body parts, logos, text, patterns, or background elements.\n"
+    "   * Do not change image quality, resolution, aspect ratio, or composition.\n"
+    "   * Do not stylize the image or make it look like a drawing, render, or illustration.\n\n"
+    "Your output should be the original model image with only the provided garment(s) realistically "
+    "worn by the model."
+)
+
+
+def run_tryon_gemini(
+    person_image:     Image.Image,
+    garment_images:   list[Image.Image],
+    credentials_dict: Optional[dict] = None,
+    project:          str = "",
+    location:         str = "us-central1",
+) -> list[Image.Image]:
+    """
+    Call gemini-3.1-flash-image via Vertex AI for multi-garment virtual try-on.
+    Accepts one person image and one or more garment images.
+    Returns a list containing the single result PIL Image.
+    """
+    creds  = _service_account_creds(credentials_dict)
+    client = genai.Client(
+        vertexai=True,
+        project=project,
+        location=location,
+        credentials=creds,
+    )
+
+    parts = [
+        types.Part.from_bytes(data=_pil_to_bytes(person_image), mime_type="image/png"),
+        *(types.Part.from_bytes(data=_pil_to_bytes(g), mime_type="image/png") for g in garment_images),
+        types.Part.from_text(text=GEMINI_VTO_PROMPT),
+    ]
+
+    response = client.models.generate_content(
+        model=GEMINI_IMAGE_MODEL,
+        contents=[types.Content(role="user", parts=parts)],
+        config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+    )
+
+    result_images = []
+    for candidate in response.candidates:
+        for part in candidate.content.parts:
+            if getattr(part, "inline_data", None):
+                result_images.append(
+                    Image.open(io.BytesIO(part.inline_data.data)).convert("RGB")
+                )
+    return result_images
