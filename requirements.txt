@@ -7,6 +7,9 @@ pydantic-settings>=2.0.0
 requests>=2.31.0
 Pillow>=10.0.0
 
+# ── Time zones (slim base image has no system tz database) ────────────────────
+tzdata>=2024.1
+
 # ── Google Cloud ──────────────────────────────────────────────────────────────
 google-genai>=1.5.0
 google-auth>=2.29.0
