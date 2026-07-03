@@ -17,7 +17,7 @@ import time
 import urllib.request
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8080").rstrip("/")
-BASE_URL = "https://vton-api-234062011057.us-central1.run.app"
+BASE_URL = "https://beforeai-virtual-try-on-backend-233827107766.us-central1.run.app"
 
 # ── Inputs — replace with real publicly accessible image URLs ──────────────────
 
