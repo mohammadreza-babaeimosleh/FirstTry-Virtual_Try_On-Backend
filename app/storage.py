@@ -22,6 +22,10 @@ import io
 import logging
 import uuid
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+# European time zone used for the folder-name timestamp (CET / CEST, auto-DST).
+EUROPEAN_TZ = ZoneInfo("Europe/Berlin")
 
 from PIL import Image
 
@@ -150,12 +154,17 @@ def upload_generation(
     """
     client        = _get_client(credentials_dict)
     has_key       = bool(credentials_dict)
+
+    # European (CET/CEST) timestamp prefix → folder names sort chronologically
+    # and are human-readable, e.g. VTON/2026-07-03_14-30-45_<id>
+    now_eu        = datetime.datetime.now(EUROPEAN_TZ)
+    timestamp     = now_eu.strftime("%Y-%m-%d_%H-%M-%S")
     generation_id = uuid.uuid4().hex
-    folder        = f"VTON/{generation_id}"
+    folder        = f"VTON/{timestamp}_{generation_id}"
     mime          = _content_type(fmt)
     ext           = fmt.lower()
 
-    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    created_at    = now_eu.isoformat(timespec="seconds")
 
     def _upload(img: Image.Image, name: str) -> str:
         blob = client.bucket(bucket_name).blob(name)
@@ -169,16 +178,6 @@ def upload_generation(
     logger.info(
         "Uploading generation %s to gs://%s/%s … (garments=%d)",
         generation_id, bucket_name, folder, 1 + len(extras),
-    )
-
-    # GCS has no real folders — "VTON/{id}/" is only a name prefix on the objects
-    # below it, so it cannot carry metadata on its own. Create a zero-byte
-    # placeholder object at the folder path (trailing slash) to hold the metadata,
-    # mirroring what the GCS console does when a folder is created manually.
-    folder_blob = client.bucket(bucket_name).blob(f"{folder}/")
-    folder_blob.metadata = {"created": created_at, "generation_id": generation_id}
-    folder_blob.upload_from_string(
-        b"", content_type="application/x-www-form-urlencoded;charset=UTF-8"
     )
 
     model_url   = _upload(model_image,   f"{folder}/model.{ext}")
