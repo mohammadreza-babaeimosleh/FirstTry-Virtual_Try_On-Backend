@@ -171,6 +171,16 @@ def upload_generation(
         generation_id, bucket_name, folder, 1 + len(extras),
     )
 
+    # GCS has no real folders — "VTON/{id}/" is only a name prefix on the objects
+    # below it, so it cannot carry metadata on its own. Create a zero-byte
+    # placeholder object at the folder path (trailing slash) to hold the metadata,
+    # mirroring what the GCS console does when a folder is created manually.
+    folder_blob = client.bucket(bucket_name).blob(f"{folder}/")
+    folder_blob.metadata = {"created": created_at, "generation_id": generation_id}
+    folder_blob.upload_from_string(
+        b"", content_type="application/x-www-form-urlencoded;charset=UTF-8"
+    )
+
     model_url   = _upload(model_image,   f"{folder}/model.{ext}")
     garment_url = _upload(garment_image, f"{folder}/garment.{ext}")
 
