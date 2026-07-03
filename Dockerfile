@@ -1,12 +1,6 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# backend_api_vertex_gcp — Google Cloud Run deployment
-#
-# Lightweight python:3.11-slim base (no GPU needed).
-# Vertex AI handles inference; this service only orchestrates HTTP + GCS.
-# ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# System libraries for Pillow
+# System libs for image processing (Pillow / OpenCV)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 \
         libglib2.0-0 \
@@ -14,14 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install dependencies first (Docker layer cache)
+# Install dependencies first so this layer stays cached across builds
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code
 COPY app/ /app/app/
 
-# Cloud Run injects PORT automatically
-ENV PORT=8080
+# Run as non-root
+RUN useradd --create-home appuser
+USER appuser
 
-CMD ["python", "-m", "app.main"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
