@@ -23,11 +23,11 @@ BASE_URL = "https://beforeai-virtual-try-on-backend-233827107766.us-central1.run
 
 # MODEL_IMAGE_URL:   "https://6174co.com/wp-content/uploads/2026/02/5866172930130119565.jpg",
 # MODEL_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/03/5872825671262866644.jpg"
-MODEL_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/04/5965327215140474110.jpg"
+MODEL_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/07/person5.jpg"
 
 # GARMENT_IMAGE_URL: "https://6174co.com/wp-content/uploads/2026/02/5868487290437438321.jpg",
 # GARMENT_IMAGE_URL = "https://beams-america.com/cdn/shop/files/Copyof010563803_79.webp?v=1750197156&width=1100"
-GARMENT_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/04/5965327215140474111.jpg"
+GARMENT_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/02/5866172930130119474.jpg"
 
 # Second garment for multi-garment Gemini tests — replace with a real URL
 GARMENT_IMAGE_URL_2 = "https://6174co.com/wp-content/uploads/2026/04/5965327215140474111.jpg"
