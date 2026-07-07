@@ -65,7 +65,7 @@ class TryOnRequest(BaseModel):
 
 class TryOnResponse(BaseModel):
     generation_id: str = Field(..., description="Unique ID for this generation.")
-    folder:        str = Field(..., description="GCS folder path: VTON/{generation_id}")
+    folder:        str = Field(..., description="GCS folder path: VTON/{model}/{generation_id}")
     model_url:     str = Field(..., description="GCS URL of the uploaded person image.")
     garment_url:   str = Field(..., description="GCS URL of the uploaded garment image.")
     result_urls:   list[str] = Field(..., description="GCS URLs of the generated try-on result(s).")
@@ -156,6 +156,7 @@ def _pipeline(req: TryOnRequest) -> dict:
         public=cfg.gcs_public_bucket,
         credentials_dict=cfg.credentials_dict(),
         fmt=req.output_format,
+        model_folder=req.model,
     )
     return bundle
 

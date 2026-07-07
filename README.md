@@ -23,7 +23,7 @@ See [API_DOCS.md](API_DOCS.md) for full request/response reference and code exam
 ## GCS output structure
 
 ```
-VTON/{generation_id}/
+VTON/{model}/{generation_id}/
   model.png          ← person image
   garment.png        ← primary garment
   garment_1.png      ← second garment (Gemini multi-garment only)

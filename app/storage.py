@@ -136,6 +136,7 @@ def upload_generation(
     credentials_dict:     Optional[dict] = None,
     fmt:                  str = "png",
     extra_garment_images: Optional[list[Image.Image]] = None,
+    model_folder:         Optional[str] = None,
 ) -> dict:
     """
     Upload all images for one generation to GCS and return their URLs.
@@ -160,7 +161,9 @@ def upload_generation(
     now_eu        = datetime.datetime.now(EUROPEAN_TZ)
     timestamp     = now_eu.strftime("%Y-%m-%d_%H-%M-%S")
     generation_id = uuid.uuid4().hex
-    folder        = f"VTON/{timestamp}_{generation_id}"
+    # Nest each generation under its model folder: VTON/{model_folder}/{ts}_{id}
+    _root         = f"VTON/{model_folder}" if model_folder else "VTON"
+    folder        = f"{_root}/{timestamp}_{generation_id}"
     mime          = _content_type(fmt)
     ext           = fmt.lower()
 
