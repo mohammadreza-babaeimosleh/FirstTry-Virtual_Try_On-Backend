@@ -29,7 +29,7 @@ MODEL_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/07/person5.jpg"
 # GARMENT_IMAGE_URL = "https://beams-america.com/cdn/shop/files/Copyof010563803_79.webp?v=1750197156&width=1100"
 GARMENT_IMAGE_URL = "https://6174co.com/wp-content/uploads/2026/02/5866172930130119474.jpg"
 
-# Second garment for multi-garment Gemini tests — replace with a real URL
+# Second garment for multi-garment tests (Gemini and virtual-try-on-001) — replace with a real URL
 GARMENT_IMAGE_URL_2 = "https://6174co.com/wp-content/uploads/2026/04/5965327215140474111.jpg"
 
 # ── Payloads ──────────────────────────────────────────────────────────────────
@@ -56,6 +56,15 @@ GEMINI_MULTI_PAYLOAD = {
     "garment_image_urls": [GARMENT_IMAGE_URL, GARMENT_IMAGE_URL_2],   # add more URLs as needed
     "output_format":      "png",
     "model":              "gemini-3.1-flash-image",
+}
+
+# virtual-try-on-001 — multiple garments (composited into one photo before
+# being sent to Vertex; see app/imaging.py:combine_images_horizontal)
+VTO_MULTI_PAYLOAD = {
+    "model_image_url":    MODEL_IMAGE_URL,
+    "garment_image_urls": [GARMENT_IMAGE_URL, GARMENT_IMAGE_URL_2],   # up to 6
+    "sample_count":       1,
+    "output_format":      "png",
 }
 
 
@@ -152,6 +161,36 @@ def test_tryon_gemini() -> None:
     print("\n  Done.")
 
 
+def test_tryon_vto_multi() -> None:
+    print("\n── POST /tryon  [virtual-try-on-001, multi-garment] ─────────")
+    print("  Payload:", json.dumps(VTO_MULTI_PAYLOAD, indent=4))
+
+    t0      = time.time()
+    result  = _post("/tryon", VTO_MULTI_PAYLOAD)
+    elapsed = time.time() - t0
+
+    print(f"\n  Completed in {elapsed:.1f}s")
+    print("  generation_id :", result.get("generation_id"))
+    print("  folder        :", result.get("folder"))
+    print("  model_url     :", result.get("model_url"))
+    print("  garment_url   :", result.get("garment_url"), "(the composited photo, not just the first garment)")
+    print("  result_urls   :", result.get("result_urls"))
+
+    result_urls = result.get("result_urls", [])
+    if not result_urls:
+        print("\n  WARNING: no result URLs returned.")
+        return
+
+    os.makedirs("output_images", exist_ok=True)
+    for i, url in enumerate(result_urls):
+        dest = f"output_images/vto_multi_result_{i}.png"
+        print(f"\n  Downloading result {i} → {dest} …")
+        _download(url, dest)
+        print(f"  Saved: {dest}")
+
+    print("\n  Done.")
+
+
 def test_tryon_gemini_multi() -> None:
     print("\n── POST /tryon  [gemini-3.1-flash-image, multi-garment] ─────")
     print("  Payload:", json.dumps(GEMINI_MULTI_PAYLOAD, indent=4))
@@ -185,10 +224,11 @@ def test_tryon_gemini_multi() -> None:
 # ── Entry point ───────────────────────────────────────────────────────────────
 #
 # Pass a test name to run only that test, e.g.:
-#   python test_api.py vto          → virtual-try-on-001 (default)
+#   python test_api.py vto          → virtual-try-on-001 (default), single garment
+#   python test_api.py vto_multi    → virtual-try-on-001, multi-garment (composited)
 #   python test_api.py gemini       → gemini single garment
-#   python test_api.py gemini_multi → gemini multi-garment
-#   python test_api.py              → runs all three
+#   python test_api.py gemini_multi → gemini multi-garment (native)
+#   python test_api.py              → runs all four
 #
 if __name__ == "__main__":
     print(f"Target: {BASE_URL}\n")
@@ -200,13 +240,15 @@ if __name__ == "__main__":
 
         if suite in ("all", "vto"):
             test_tryon()
+        if suite in ("all", "vto_multi"):
+            test_tryon_vto_multi()
         if suite in ("all", "gemini"):
             test_tryon_gemini()
         if suite in ("all", "gemini_multi"):
             test_tryon_gemini_multi()
 
-        if suite not in ("all", "vto", "gemini", "gemini_multi"):
-            print(f"\nUnknown test '{suite}'. Valid options: vto, gemini, gemini_multi")
+        if suite not in ("all", "vto", "vto_multi", "gemini", "gemini_multi"):
+            print(f"\nUnknown test '{suite}'. Valid options: vto, vto_multi, gemini, gemini_multi")
             sys.exit(1)
 
     except urllib.error.HTTPError as exc:
