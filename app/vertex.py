@@ -192,24 +192,28 @@ GEMINI_VTO_PROMPT = (
     "garment(s).\n\n"
     "The following rules MUST be strictly obeyed:\n\n"
     "1. **Preserve the model exactly**\n"
-    "   * Do not change the model's face, identity, facial expression, skin tone, hair, "
-    "body shape, body proportions, age, gender presentation, or pose.\n"
-    "   * Do not alter visible features such as hands, legs, tattoos, makeup, jewelry, "
-    "or accessories unless they are physically covered by the garment.\n\n"
+    "   * Keep the model's face, identity, facial expression, skin tone, hair, body "
+    "shape, body proportions, age, gender presentation, and pose exactly as they "
+    "appear in the model image.\n"
+    "   * Keep visible features such as hands, legs, tattoos, makeup, jewelry, and "
+    "accessories exactly as they appear, except where the garment physically covers "
+    "them.\n\n"
     "2. **Preserve the pose**\n"
     "   * Accurately recognize the model's body pose, posture, limb positions, and camera angle.\n"
     "   * The garment must follow the model's existing pose naturally.\n"
-    "   * Do not distort, rotate, stretch, or reposition the model's body.\n\n"
+    "   * Keep the model's body in its exact original position, orientation, and proportions.\n\n"
     "3. **Preserve the garment exactly**\n"
     "   * Keep the garment's color, texture, fabric type, pattern, logos, stitching, seams, "
-    "buttons, zippers, prints, embroidery, and all visible design details unchanged.\n"
-    "   * Do not invent, remove, blur, simplify, or modify any garment details.\n"
+    "buttons, zippers, prints, embroidery, and all visible design details exactly as they "
+    "appear in the garment image(s).\n"
+    "   * Reproduce every garment detail faithfully and at full clarity — sharp, accurate, "
+    "and true to the source.\n"
     "   * The garment should retain its original style, silhouette, length, fit, and structure "
     "while conforming naturally to the model's body and pose.\n\n"
     "4. **Preserve the scene**\n"
-    "   * Do not change the background, lighting, shadows, camera perspective, image framing, "
-    "or environment.\n"
-    "   * Do not add or remove objects from the scene.\n\n"
+    "   * Keep the background, lighting, shadows, camera perspective, image framing, and "
+    "environment exactly as they appear in the model image.\n"
+    "   * Keep every object already in the scene exactly as it appears.\n\n"
     "5. **Realistic integration**\n"
     "   * The garment must be placed only on the correct body area.\n"
     "   * Respect natural occlusions, such as arms, hair, hands, bags, or other objects "
@@ -217,13 +221,49 @@ GEMINI_VTO_PROMPT = (
     "   * Adjust wrinkles, folds, and shadows only as needed to make the garment look naturally "
     "worn, while preserving the garment's original appearance.\n"
     "   * The final result must look photorealistic and seamless.\n\n"
-    "6. **No unwanted edits**\n"
-    "   * Do not add new clothing, accessories, body parts, logos, text, patterns, or background elements.\n"
-    "   * Do not change image quality, resolution, aspect ratio, or composition.\n"
-    "   * Do not stylize the image or make it look like a drawing, render, or illustration.\n\n"
+    "6. **Faithful, unedited output**\n"
+    "   * Include only the clothing, accessories, body parts, logos, text, patterns, and "
+    "background elements already present in the source images.\n"
+    "   * Keep the image quality, resolution, aspect ratio, and composition exactly as in "
+    "the model image.\n"
+    "   * Render the result as a straight photorealistic photograph, matching the medium of "
+    "the source images.\n\n"
     "Your output should be the original model image with only the provided garment(s) realistically "
     "worn by the model."
 )
+
+
+# Natural-language description of each garment_type value, used to build the
+# extra instruction line appended to GEMINI_VTO_PROMPT when a caller passes
+# garment_type. Keep the keys in sync with main.py's GARMENT_TYPES (and the
+# gateway's — see API Gateway's app/config.py:GARMENT_TYPES).
+_GARMENT_TYPE_DESCRIPTIONS: dict[str, str] = {
+    "upper_body": "an upper-body garment such as a top, shirt, blouse, or jacket worn as the main upper layer",
+    "lower_body": "a lower-body garment such as pants, trousers, or a skirt",
+    "dress": "a dress",
+    "full_body": "a full-body garment or outfit covering both the upper and lower body",
+    "outerwear": "an outerwear layer such as a coat, jacket, or cardigan worn over other clothing",
+    "glasses": "a pair of glasses (eyewear), such as sunglasses or prescription frames, worn on the face",
+    "shoes": "a pair of shoes or other footwear, worn on the feet",
+    "headwear": "a headwear item such as a hat, cap, or beanie, worn on the head",
+    "accessories": "an accessory item such as a bag, belt, scarf, tie, or piece of jewelry",
+}
+
+
+def _garment_type_instruction(garment_type: Optional[str]) -> Optional[str]:
+    """Extra prompt line for a known garment_type, or None if not provided/unrecognized."""
+    if not garment_type:
+        return None
+    description = _GARMENT_TYPE_DESCRIPTIONS.get(garment_type)
+    if description is None:
+        return None
+    return (
+        f"\n\nThe garment being applied from the garment image(s) is {description}. If a "
+        "garment image itself shows more than one garment (for example, a full outfit "
+        "worn by a model), take only this specified garment from it, independent of "
+        "every other garment or item visible in that image. Use this to correctly "
+        "identify which item and body region on the person to replace."
+    )
 
 
 def run_tryon_gemini(
@@ -232,11 +272,17 @@ def run_tryon_gemini(
     credentials_dict: Optional[dict] = None,
     project:          str = "",
     location:         str = "us-central1",
+    garment_type:     Optional[str] = None,
 ) -> list[Image.Image]:
     """
     Call gemini-3.1-flash-image via Vertex AI for multi-garment virtual try-on.
     Accepts one person image and one or more garment images.
     Returns a list containing the single result PIL Image.
+
+    `garment_type`, when provided, is appended to the prompt as an extra
+    instruction line (see _garment_type_instruction) — a hint for which body
+    region/category the garment belongs to, e.g. to disambiguate a garment
+    image that shows a full outfit rather than an isolated item.
     """
     creds  = _service_account_creds(credentials_dict)
     client = genai.Client(
@@ -246,10 +292,15 @@ def run_tryon_gemini(
         credentials=creds,
     )
 
+    prompt = GEMINI_VTO_PROMPT
+    extra = _garment_type_instruction(garment_type)
+    if extra:
+        prompt += extra
+
     parts = [
         types.Part.from_bytes(data=_pil_to_bytes(person_image), mime_type="image/png"),
         *(types.Part.from_bytes(data=_pil_to_bytes(g), mime_type="image/png") for g in garment_images),
-        types.Part.from_text(text=GEMINI_VTO_PROMPT),
+        types.Part.from_text(text=prompt),
     ]
 
     response = client.models.generate_content(

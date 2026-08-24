@@ -17,11 +17,12 @@ Runs virtual try-on and returns GCS URLs for all generated images.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `model_image_url` | string | ✅ | — | Public URL of the person / model photo |
-| `garment_image_urls` | string **or** string[] | ✅¹ | — | Single garment URL (string) **or** list of garment URLs. Multiple URLs require `gemini-3.1-flash-image`. Takes priority over `garment_image_url` |
+| `garment_image_urls` | string **or** string[] | ✅¹ | — | Single garment URL (string) **or** list of garment URLs. Both models now accept multiple: `gemini-3.1-flash-image` takes each as a separate native reference image (no cap); `virtual-try-on-001` composites them into one photo first (up to 6 garments, `422` beyond that). Takes priority over `garment_image_url` |
 | `garment_image_url` | string | ✅¹ | — | **Legacy.** Single garment URL. Use `garment_image_urls` for new integrations |
 | `model` | string | ❌ | `"virtual-try-on-001"` | AI model to use. See [Models](#models) below |
 | `sample_count` | int | ❌ | `1` | Number of results to generate (1–4). Applies to `virtual-try-on-001` only |
 | `output_format` | string | ❌ | `"png"` | `"png"` or `"jpeg"` |
+| `garment_type` | string | ❌ | — | Hint: `accessories`, `dress`, `full_body`, `glasses`, `headwear`, `lower_body`, `outerwear`, `shoes`, or `upper_body`. **Ignored by `virtual-try-on-001`** (no prompt channel). For `gemini-3.1-flash-image`: all 9 values are appended to the prompt. Unrecognized values return `422` |
 
 > ¹ One of `garment_image_urls` or `garment_image_url` is required. If both are sent, `garment_image_urls` wins.
 
@@ -39,7 +40,7 @@ Runs virtual try-on and returns GCS URLs for all generated images.
 }
 ```
 
-> `garment_url` always points to the primary garment (`garment_image_url`). Additional garments are saved to the same GCS folder as `garment_1.png`, `garment_2.png`, etc., but are not included in the response.
+> `garment_url` always points to the primary garment. For `gemini-3.1-flash-image`, additional garments are saved to the same GCS folder as `garment_1.png`, `garment_2.png`, etc. (not included in the response). For `virtual-try-on-001` with more than one garment, `garment_url` instead points to the single composited left-to-right photo that was actually sent to Vertex — the individual originals aren't saved separately.
 
 ---
 
@@ -47,19 +48,25 @@ Runs virtual try-on and returns GCS URLs for all generated images.
 
 ### `virtual-try-on-001` (default)
 
-Purpose-built Vertex AI model for single-garment try-on. Highest accuracy for garment texture and body preservation.
+Purpose-built Vertex AI model for try-on. Highest accuracy for garment texture and body preservation.
 
-- Single garment only — passing `garment_image_urls` returns a `422` error
+- Supports multiple garments: pass a list in `garment_image_urls` (up to 6 — a
+  photo-legibility cap, not a provider limit; `422` beyond that) and this
+  backend composites them into a single left-to-right photo before sending it
+  to Vertex, since the underlying `recontext_image` API only accepts one
+  product image. A single garment passes through unchanged
 - Supports `sample_count` 1–4 to generate multiple result variations
-- No prompt support
+- No prompt support — `garment_type` is accepted (validated) but silently ignored regardless of garment count; there's no channel to pass it to the model
 
 ### `gemini-3.1-flash-image`
 
 Gemini image editing model via Vertex AI. Supports multiple garments dressed on the model simultaneously.
 
-- Pass additional garments in `garment_image_urls`
+- Pass additional garments in `garment_image_urls` — each is sent to Gemini as its own separate reference image (no compositing, no cap in this codebase)
 - Always returns 1 result image (`sample_count` is ignored)
 - Guided by a built-in VTO prompt — no custom prompt needed
+- If `garment_type` is any of the 9 supported values (`upper_body`, `lower_body`, `dress`, `full_body`, `outerwear`, `glasses`, `shoes`, `headwear`, `accessories`), an instruction sentence naming the garment's body region/category is appended to the built-in prompt
+- This is also the mechanism for disambiguating a busy reference photo: the appended instruction explicitly tells the model that if a garment image itself shows more than one garment (e.g. a full outfit worn by a reference model), it should use only the specified `garment_type` from that image, independent of every other garment or item visible in it
 
 ---
 
@@ -97,6 +104,37 @@ Gemini image editing model via Vertex AI. Supports multiple garments dressed on 
   "model": "gemini-3.1-flash-image"
 }
 ```
+
+### Multiple garments — virtual-try-on-001
+
+```json
+{
+  "model_image_url":    "https://example.com/person.jpg",
+  "garment_image_urls": [
+    "https://example.com/shirt.jpg",
+    "https://example.com/pants.jpg",
+    "https://example.com/jacket.jpg"
+  ]
+}
+```
+
+`model` is omitted here since `virtual-try-on-001` is the default. The three
+garments are composited into a single left-to-right photo before being sent
+to Vertex — `garment_url` in the response points to that composite, not to
+`shirt.jpg` alone.
+
+### Single garment — Gemini, with `garment_type` hint
+
+```json
+{
+  "model_image_url":    "https://example.com/person.jpg",
+  "garment_image_urls": "https://example.com/jacket.jpg",
+  "model":              "gemini-3.1-flash-image",
+  "garment_type":       "outerwear"
+}
+```
+
+`garment_type` is silently ignored if `model` is `virtual-try-on-001` (or omitted, since that's the default) — no error, no effect.
 
 ---
 
@@ -245,12 +283,17 @@ console.log("Result URL:", data.result_urls[0]);
 ```typescript
 type TryOnModel = "virtual-try-on-001" | "gemini-3.1-flash-image";
 
+type GarmentType =
+  | "upper_body" | "lower_body" | "dress" | "full_body" | "outerwear"
+  | "accessories" | "glasses" | "headwear" | "shoes";                  // all 9 used in the prompt for gemini-3.1-flash-image
+
 interface TryOnRequest {
   model_image_url:    string;
   garment_image_urls: string | string[];  // single URL string or array; multiple items require gemini-3.1-flash-image
   model?:             TryOnModel;         // default: "virtual-try-on-001"
   sample_count?:      number;             // 1–4, default 1; virtual-try-on-001 only
   output_format?:     "png" | "jpeg";     // default: "png"
+  garment_type?:      GarmentType;        // optional hint; ignored by virtual-try-on-001, used by gemini-3.1-flash-image
 }
 
 interface TryOnResponse {
@@ -450,7 +493,7 @@ suspend fun runTryOn(
 | HTTP code | Meaning | Common cause |
 |---|---|---|
 | `200` | Success | — |
-| `422` | Validation error | Unsupported `model` value; `garment_image_urls` sent with `virtual-try-on-001`; missing or unreachable image URL; invalid `sample_count` |
+| `422` | Validation error | Unsupported `model` value; `garment_image_urls` sent with `virtual-try-on-001`; missing or unreachable image URL; invalid `sample_count`; unsupported `garment_type` value |
 | `500` | Server error | Vertex AI / Gemini returned no images; GCS write error |
 
 Inference typically takes **10–30 seconds**. Set your HTTP client timeout to at least **300 seconds**.

@@ -21,11 +21,12 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .config import get_settings
 from .vertex import run_tryon, run_tryon_gemini
 from .storage import upload_generation
+from .imaging import MAX_COMBINED_GARMENTS, combine_images_horizontal
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,7 +41,39 @@ _executor = ThreadPoolExecutor(max_workers=settings.worker_threads)
 
 DEFAULT_MODEL        = "virtual-try-on-001"
 SUPPORTED_MODELS     = frozenset({"virtual-try-on-001", "gemini-3.1-flash-image"})
-MULTI_GARMENT_MODELS = frozenset({"gemini-3.1-flash-image"})
+# Both models now support multiple garments, via two different mechanisms:
+# gemini-3.1-flash-image takes each garment natively as its own separate
+# reference image; virtual-try-on-001's recontext_image API only accepts one
+# product image, so main.py composites multiple garments into a single
+# left-to-right photo first (see app/imaging.py) — same approach as the
+# FLUX and FASHN backends.
+MULTI_GARMENT_MODELS = frozenset({"gemini-3.1-flash-image", "virtual-try-on-001"})
+
+# Optional hint on the request: which body region/category the garment being
+# tried on belongs to. Same 9-value vocabulary as the gateway and every other
+# VTO backend (see API Gateway's app/config.py:GARMENT_TYPES) — kept in sync
+# by hand across repos, same pattern as storage.py/imaging.py.
+#
+# virtual-try-on-001 has no prompt channel at all (see app/vertex.py's
+# _call_via_sdk/_call_via_rest — the request is just personImage +
+# productImages, nothing else), so garment_type is silently ignored for it —
+# see _pipeline below. gemini-3.1-flash-image IS prompt-driven, so
+# garment_type is appended to GEMINI_VTO_PROMPT via run_tryon_gemini —
+# including the 4 accessory categories (glasses/shoes/headwear/accessories),
+# which now have their own entries in vertex.py's _GARMENT_TYPE_DESCRIPTIONS.
+GARMENT_TYPES = frozenset(
+    {
+        "upper_body",
+        "lower_body",
+        "dress",
+        "full_body",
+        "outerwear",
+        "glasses",
+        "shoes",
+        "headwear",
+        "accessories",
+    }
+)
 
 app = FastAPI(
     title="Virtual Try-On — Vertex AI",
@@ -57,10 +90,18 @@ app = FastAPI(
 class TryOnRequest(BaseModel):
     model_image_url:    str                               = Field(...,            description="Public URL of the person / model image.")
     garment_image_url:  Optional[str]                     = Field(None,           description="[Legacy] Single garment URL. Prefer garment_image_urls.")
-    garment_image_urls: Optional[Union[str, list[str]]]   = Field(None,           description="Single garment URL (string) or list of garment URLs. Takes priority over garment_image_url. Multiple URLs require gemini-3.1-flash-image.")
+    garment_image_urls: Optional[Union[str, list[str]]]   = Field(None,           description=f"Single garment URL (string) or list of garment URLs. Takes priority over garment_image_url. Both models support multiple garments: gemini-3.1-flash-image takes each as a separate native reference image (no cap); virtual-try-on-001 composites them into a single photo first (up to {MAX_COMBINED_GARMENTS} garments).")
     sample_count:       int                               = Field(1, ge=1, le=4, description="Number of result images to generate (1–4). Applies to virtual-try-on-001 only.")
     output_format:      str                               = Field("png",          description="Output image format: 'png' or 'jpeg'.")
     model:              str                               = Field(DEFAULT_MODEL,  description="Model to use. Supported: virtual-try-on-001, gemini-3.1-flash-image.")
+    garment_type:       Optional[str]                      = Field(None,           description=f"Optional hint: which body region/category the garment belongs to. One of: {sorted(GARMENT_TYPES)}. Ignored by virtual-try-on-001 (no prompt channel); injected into the prompt for gemini-3.1-flash-image.")
+
+    @field_validator("garment_type")
+    @classmethod
+    def _validate_garment_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in GARMENT_TYPES:
+            raise ValueError(f"Unsupported garment_type '{v}'. Must be one of: {sorted(GARMENT_TYPES)}, or omitted.")
+        return v
 
 
 class TryOnResponse(BaseModel):
@@ -107,7 +148,15 @@ def _pipeline(req: TryOnRequest) -> dict:
             status_code=422,
             detail=(
                 f"Model '{req.model}' does not support multiple garments. "
-                "Use 'gemini-3.1-flash-image' for multi-garment try-on."
+                "Use 'gemini-3.1-flash-image' or 'virtual-try-on-001' for multi-garment try-on."
+            ),
+        )
+    if req.model == DEFAULT_MODEL and len(garment_urls) > MAX_COMBINED_GARMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"At most {MAX_COMBINED_GARMENTS} garment images are supported for "
+                f"'{DEFAULT_MODEL}' (received {len(garment_urls)})."
             ),
         )
 
@@ -120,8 +169,26 @@ def _pipeline(req: TryOnRequest) -> dict:
     ]
 
     # 3. Inference
+    # Which extra garment images (if any) get uploaded separately in step 4 —
+    # only meaningful for gemini's native-multi-reference path; overridden to
+    # [] below for virtual-try-on-001 once its garments are composited.
+    upload_extra_garments = extra_imgs
+
     if req.model == DEFAULT_MODEL:
-        logger.info("Vertex AI inference | model=%s samples=%d …", req.model, req.sample_count)
+        # virtual-try-on-001's recontext_image call accepts exactly one
+        # product image — when more than one garment was supplied, composite
+        # them into a single left-to-right photo first (see app/imaging.py),
+        # same approach as the FLUX and FASHN backends. A single garment
+        # passes through unchanged. req.garment_type is intentionally ignored
+        # here — recontext_image has no prompt/text channel at all (just
+        # personImage + productImages), so there's nowhere to put it.
+        garment_img = combine_images_horizontal([garment_img] + extra_imgs)
+        upload_extra_garments = []  # already folded into the composite above
+
+        logger.info(
+            "Vertex AI inference | model=%s samples=%d garments=%d …",
+            req.model, req.sample_count, 1 + len(extra_imgs),
+        )
         result_images = run_tryon(
             person_image=person_img,
             garment_image=garment_img,
@@ -142,15 +209,21 @@ def _pipeline(req: TryOnRequest) -> dict:
             credentials_dict=cfg.credentials_dict(),
             project=cfg.gcp_project_id,
             location=cfg.gcp_location,
+            garment_type=req.garment_type,
         )
         if not result_images:
             raise HTTPException(status_code=500, detail="Gemini returned no images.")
 
-    # 4. Upload everything to GCS
+    # 4. Upload everything to GCS. For virtual-try-on-001, garment_img is now
+    # the composite actually sent to Vertex (or the single original garment,
+    # unchanged, if there was only one) — the individual originals aren't
+    # persisted separately when there was more than one, same convention as
+    # the FLUX/FASHN backends. For gemini, garment_img is still just the
+    # first garment, with the rest uploaded via upload_extra_garments.
     bundle = upload_generation(
         model_image=person_img,
         garment_image=garment_img,
-        extra_garment_images=extra_imgs,
+        extra_garment_images=upload_extra_garments,
         result_images=result_images,
         bucket_name=cfg.gcs_bucket_name,
         public=cfg.gcs_public_bucket,
