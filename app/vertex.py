@@ -259,10 +259,10 @@ def _garment_type_instruction(garment_type: Optional[str]) -> Optional[str]:
         return None
     return (
         f"\n\nThe garment being applied from the garment image(s) is {description}. If a "
-        "garment image itself shows more than one garment (for example, a full outfit "
-        "worn by a model), take only this specified garment from it, independent of "
-        "every other garment or item visible in that image. Use this to correctly "
-        "identify which item and body region on the person to replace."
+        "garment image itself shows more than one garment (for example, a coordinated "
+        "set photographed together), take only this specified garment from it, "
+        "independent of every other garment or item visible in that image. Use this to "
+        "correctly identify which item and body region on the person to replace."
     )
 
 

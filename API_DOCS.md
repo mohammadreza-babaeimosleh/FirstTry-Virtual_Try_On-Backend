@@ -66,7 +66,7 @@ Gemini image editing model via Vertex AI. Supports multiple garments dressed on 
 - Always returns 1 result image (`sample_count` is ignored)
 - Guided by a built-in VTO prompt — no custom prompt needed
 - If `garment_type` is any of the 9 supported values (`upper_body`, `lower_body`, `dress`, `full_body`, `outerwear`, `glasses`, `shoes`, `headwear`, `accessories`), an instruction sentence naming the garment's body region/category is appended to the built-in prompt
-- This is also the mechanism for disambiguating a busy reference photo: the appended instruction explicitly tells the model that if a garment image itself shows more than one garment (e.g. a full outfit worn by a reference model), it should use only the specified `garment_type` from that image, independent of every other garment or item visible in it
+- This is also the mechanism for disambiguating a busy reference photo: the appended instruction explicitly tells the model that if a garment image itself shows more than one garment (e.g. a coordinated set photographed together), it should use only the specified `garment_type` from that image, independent of every other garment or item visible in it
 
 ---
 
