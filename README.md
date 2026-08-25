@@ -6,7 +6,7 @@ FastAPI service that runs AI-powered virtual try-on and returns Google Cloud Sto
 
 | Model | Use case | Multi-garment | Prompt |
 |---|---|---|---|
-| `virtual-try-on-001` | Single garment, highest accuracy | ✓ (combined into one photo — see below) | ✗ |
+| `virtual-try-on-001` | Highest accuracy for garment texture & body preservation | ✓ (combined into one photo — see below) | ✗ |
 | `gemini-3.1-flash-image` | Single or multiple garments at once | ✓ (native — each its own reference image) | ✓ |
 
 Both models run through **Vertex AI** using the same GCP project, credentials, and billing account.
@@ -36,7 +36,7 @@ See [API_DOCS.md](API_DOCS.md) for full request/response reference and code exam
 ## GCS output structure
 
 ```
-VTON/{model}/{generation_id}/
+VTON/{model}/{timestamp}_{generation_id}/
   model.png          ← person image
   garment.png        ← primary garment — for virtual-try-on-001 with more than
                         one garment, this is the composited left-to-right photo

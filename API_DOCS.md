@@ -31,7 +31,7 @@ Runs virtual try-on and returns GCS URLs for all generated images.
 ```json
 {
   "generation_id": "0ecc17ffbcb84d9980a883dac920e9aa",
-  "folder": "VTON/0ecc17ffbcb84d9980a883dac920e9aa",
+  "folder": "VTON/virtual-try-on-001/2026-07-03_14-30-45_0ecc17ffbcb84d9980a883dac920e9aa",
   "model_url": "https://storage.googleapis.com/firsttry-results/VTON/.../model.png",
   "garment_url": "https://storage.googleapis.com/firsttry-results/VTON/.../garment.png",
   "result_urls": [
