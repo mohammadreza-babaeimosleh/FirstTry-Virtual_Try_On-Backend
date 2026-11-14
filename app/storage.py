@@ -29,6 +29,9 @@ EUROPEAN_TZ = ZoneInfo("Europe/Berlin")
 
 from PIL import Image
 
+from .cloud_tasks_cleanup import CloudTasksError, schedule_delete
+from .config import ResultsBackupConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,6 +128,36 @@ def _get_url(blob, public: bool, has_private_key: bool) -> str:
     return _signed_url_via_iam(blob)
 
 
+# ── Results backup + auto-cleanup ───────────────────────────────────────────
+
+def _backup_object_name(primary_name: str) -> str:
+    """Strip the leading VTON/ prefix for the backup bucket copy -- every
+    result stays organized the same way underneath (model_folder/
+    timestamp_generation_id/name), just without the VTON/ folder itself
+    (Mohammad's spec, 2026-09-24). See Settings.results_backup_config()."""
+    return primary_name.removeprefix("VTON/")
+
+
+def delete_object(bucket_name: str, blob_name: str, credentials_dict: Optional[dict] = None) -> None:
+    """
+    Delete one object from `bucket_name` -- the worker side of the
+    results-backup feature's delayed cleanup (called from app/main.py's
+    /internal/cleanup-object route once app/cloud_tasks_cleanup.py's
+    scheduled task fires). Treats an already-missing object as success
+    rather than an error, since Cloud Tasks can redeliver a task (making
+    this call idempotent is what makes that safe).
+    """
+    from google.api_core.exceptions import NotFound
+    client = _get_client(credentials_dict)
+    try:
+        client.bucket(bucket_name).blob(blob_name).delete()
+    except NotFound:
+        logger.info(
+            "Cleanup: gs://%s/%s was already gone (fine -- likely a Cloud Tasks retry).",
+            bucket_name, blob_name,
+        )
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def upload_generation(
@@ -137,12 +170,21 @@ def upload_generation(
     fmt:                  str = "png",
     extra_garment_images: Optional[list[Image.Image]] = None,
     model_folder:         Optional[str] = None,
+    backup:               Optional[ResultsBackupConfig] = None,
 ) -> dict:
     """
     Upload all images for one generation to GCS and return their URLs.
 
     Primary garment → garment.png  (garment_url in response)
     Extra garments  → garment_1.png, garment_2.png, … (saved but not in response)
+
+    `backup`, when given (Settings.results_backup_config()), additionally
+    writes every uploaded file to a second bucket (path unchanged apart
+    from stripping the leading VTON/) and schedules the PRIMARY bucket's
+    copy for deletion after backup.primary_ttl_minutes. None (the
+    default) leaves upload behavior exactly as before -- single bucket,
+    permanent. See app/config.py's settings-block docstring for the full
+    design.
 
     Returns:
       {
@@ -170,12 +212,29 @@ def upload_generation(
     created_at    = now_eu.isoformat(timespec="seconds")
 
     def _upload(img: Image.Image, name: str) -> str:
+        data = _pil_to_bytes(img, fmt)
+
         blob = client.bucket(bucket_name).blob(name)
         blob.metadata = {"created": created_at, "generation_id": generation_id}
-        blob.upload_from_string(_pil_to_bytes(img, fmt), content_type=mime)
+        blob.upload_from_string(data, content_type=mime)
         if public:
             blob.make_public()
-        return _get_url(blob, public=public, has_private_key=has_key)
+        url = _get_url(blob, public=public, has_private_key=has_key)
+
+        if backup is not None:
+            backup_blob = client.bucket(backup.backup_bucket_name).blob(_backup_object_name(name))
+            backup_blob.metadata = {"created": created_at, "generation_id": generation_id}
+            backup_blob.upload_from_string(data, content_type=mime)
+            try:
+                schedule_delete(bucket_name, name, backup)
+            except CloudTasksError as exc:
+                # Don't fail the whole upload over a scheduling hiccup --
+                # the backup copy already exists regardless; this just
+                # means this one primary-bucket object won't be
+                # auto-deleted. Logged for visibility, not raised.
+                logger.warning("Could not schedule primary-bucket cleanup for %s: %s", name, exc)
+
+        return url
 
     extras = extra_garment_images or []
     logger.info(

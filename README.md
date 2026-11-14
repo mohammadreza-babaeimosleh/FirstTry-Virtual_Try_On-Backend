@@ -48,6 +48,40 @@ VTON/{model}/{timestamp}_{generation_id}/
   result_1.png       ← additional result (virtual-try-on-001, sample_count > 1)
 ```
 
+## Results backup + auto-cleanup (optional)
+
+By default every file above is stored permanently in `GCS_BUCKET_NAME`. Set
+all six of the following to instead treat the primary bucket as
+**temporary**: every file is also written to a second bucket, and the
+primary copy is deleted a fixed number of minutes after upload.
+
+```
+GCS_BACKUP_BUCKET_NAME=beforeai-results-backup
+RESULTS_PRIMARY_TTL_MINUTES=15
+CLOUD_TASKS_PROJECT=your-gcp-project
+CLOUD_TASKS_LOCATION=us-central1
+CLOUD_TASKS_CLEANUP_QUEUE=results-cleanup-queue
+CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
+CLOUD_TASKS_WORKER_URL=https://<this-service's-cloud-run-url>/internal/cleanup-object
+```
+
+- The backup copy's path strips the leading `VTON/` — e.g.
+  `VTON/{model}/2026-.../result_0.png` in the primary bucket becomes
+  `{model}/2026-.../result_0.png` in the backup bucket. Everything else
+  about the path is unchanged.
+- The backup bucket's copy is **never** deleted by this backend — it's
+  meant to be permanent.
+- The primary bucket's copy is deleted via a **Cloud Task scheduled at
+  upload time**, set to fire exactly `RESULTS_PRIMARY_TTL_MINUTES` later
+  — not a GCS bucket lifecycle rule (GCS lifecycle rules can't do
+  sub-day deletion; minimum granularity is whole days).
+- **Fails safe, not open:** leave any one of the six settings unset and
+  every upload behaves exactly as before this feature existed — one
+  bucket, permanent storage, nothing scheduled.
+- One-time setup (create the backup bucket, the shared Cloud Tasks
+  queue, and grant IAM) is documented once at the project level rather
+  than per-backend.
+
 ## Local development
 
 ```bash

@@ -18,11 +18,13 @@ from typing import Optional, Union
 
 import requests as http_requests
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 
+from . import storage
+from .cloud_tasks_cleanup import verify_cloud_tasks_oidc
 from .config import get_settings
 from .vertex import run_tryon, run_tryon_gemini
 from .storage import upload_generation
@@ -230,6 +232,7 @@ def _pipeline(req: TryOnRequest) -> dict:
         credentials_dict=cfg.credentials_dict(),
         fmt=req.output_format,
         model_folder=req.model,
+        backup=cfg.results_backup_config(),
     )
     return bundle
 
@@ -238,6 +241,31 @@ def _pipeline(req: TryOnRequest) -> dict:
 
 @app.get("/health", summary="Health check")
 def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.post("/internal/cleanup-object", include_in_schema=False)
+async def cleanup_object(request: Request) -> dict:
+    """
+    Worker route for the optional results-backup feature's delayed
+    delete (see app/config.py's Settings.results_backup_config() and
+    app/cloud_tasks_cleanup.py) -- deletes one object from the PRIMARY
+    bucket, called only by a Cloud Task this service itself scheduled.
+    Never meant to be called by a real client directly; excluded from the
+    OpenAPI schema and OIDC-verified below, same pattern as API Gateway's
+    own internal worker route.
+    """
+    verify_cloud_tasks_oidc(
+        request.headers.get("authorization"),
+        service_account_email=settings.cloud_tasks_service_account_email,
+        worker_url=settings.cloud_tasks_worker_url,
+    )
+    body = await request.json()
+    storage.delete_object(
+        bucket_name=body["bucket"],
+        blob_name=body["name"],
+        credentials_dict=settings.credentials_dict(),
+    )
     return {"status": "ok"}
 
 
